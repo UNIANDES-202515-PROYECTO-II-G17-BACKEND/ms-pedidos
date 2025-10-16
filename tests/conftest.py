@@ -1,127 +1,108 @@
+# tests/conftest.py
+import logging
 import pytest
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import MagicMock, patch
-from src.domain import models # Import models to access Base.metadata
-from src.infrastructure import infrastructure
-import logging
 from uuid import uuid4
-from decimal import Decimal
 
+# --- Silenciar logs en la suite ---
 @pytest.fixture(scope="session", autouse=True)
 def disable_logging():
-    """Fixture to disable logging during tests."""
     logging.disable(logging.CRITICAL)
     yield
     logging.disable(logging.NOTSET)
 
+# Intentamos importar LifespanManager desde asgi-lifespan
+try:
+    from asgi_lifespan import LifespanManager
+except ImportError:
+    LifespanManager = None
+
+@pytest.fixture(name="client")
+async def client_fixture(override_get_session=None, override_lifespan=None):
+    from src.app import app  # importa la app tras aplicar overrides/patches
+
+    if LifespanManager is None:
+        # Fallback manual si no está instalada asgi-lifespan
+        await app.router.startup()
+        try:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                yield client
+        finally:
+            await app.router.shutdown()
+    else:
+        # Con LifespanManager se corre startup/shutdown de FastAPI
+        async with LifespanManager(app):
+            transport = ASGITransport(app=app)  # sin lifespan=
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                yield client
+
+
+# --- Session falsa (NO DB) ---
 @pytest.fixture(scope="function")
-async def app_instance_factory():
+def mock_db_session():
     """
-    Factory fixture to create a FastAPI app instance with specific patches applied
-    before the app is initialized, useful for lifespan tests.
-    Yields (app, mock_create_all, mock_log_instance, mock_inspect).
+    Devuelve un MagicMock que simula Session de SQLAlchemy sin tocar DB.
+    - Autoasigna UUIDs a objetos con atributo id cuando se hace add()
+    - Configura chaining para .query() en los casos comunes
     """
-    def _factory(lifespan_error=False):
-        mock_create_all = MagicMock()
-        mock_log_instance = MagicMock() # Mock for the logger instance
-        mock_inspect = MagicMock()
-
-        # Default behavior for mocks (success scenario)
-        mock_create_all.return_value = None
-        mock_inspector_instance = MagicMock()
-        mock_inspector_instance.get_table_names.return_value = ["mock_table_1", "mock_table_2"]
-        mock_inspect.return_value = mock_inspector_instance
-
-        if lifespan_error:
-            mock_create_all.side_effect = Exception("Database connection error during lifespan")
-            mock_inspector_instance.get_table_names.return_value = [] # No tables created
-
-        with (
-            patch('src.infrastructure.infrastructure.engine') as mock_engine,
-            patch('src.domain.models.Base.metadata.create_all', new=mock_create_all), # Corrected patch target
-            patch('sqlalchemy.inspect', new=mock_inspect),
-            patch('logging.getLogger') as mock_get_logger # Patch logging.getLogger
-        ):
-            # Configure mock_get_logger to return our mock_log_instance for src.app's logger
-            def get_logger_side_effect(name):
-                if name == 'src.app':
-                    return mock_log_instance
-                return logging.getLogger(name) # Return real logger for others
-            mock_get_logger.side_effect = get_logger_side_effect
-
-            # Configure the mock engine for success
-            mock_engine.execution_options.return_value = mock_engine
-            mock_engine.connect.return_value.__aenter__.return_value = MagicMock()
-            mock_engine.begin.return_value.__aenter__.return_value = MagicMock()
-
-            # Import app here to ensure it's created after patches are applied
-            from src.app import app as fastapi_app
-            return fastapi_app, mock_create_all, mock_log_instance, mock_inspect
-    yield _factory
-
-@pytest.fixture(scope="function")
-async def app_transport(app_instance_factory):
-    """Fixture to provide an ASGITransport for the FastAPI app (success scenario)."""
-    fastapi_app, _, _, _ = app_instance_factory(lifespan_error=False)
-    return ASGITransport(app=fastapi_app)
-
-@pytest.fixture(scope="function")
-async def client(app_transport):
-    """
-    Fixture that provides a test client for the FastAPI application (success scenario).
-    """
-    async with AsyncClient(transport=app_transport, base_url="http://test") as ac:
-        yield ac
-
-@pytest.fixture(scope="function")
-async def app_transport_lifespan_error(app_instance_factory):
-    """
-    Fixture to provide an ASGITransport for the FastAPI app (lifespan error scenario).
-    Yields (transport, mock_create_all, mock_log_instance, mock_inspect).
-    """
-    fastapi_app, mock_create_all, mock_log_instance, mock_inspect = app_instance_factory(lifespan_error=True)
-    transport = ASGITransport(app=fastapi_app)
-    yield transport, mock_create_all, mock_log_instance, mock_inspect
-
-@pytest.fixture(scope="function")
-async def client_with_lifespan_error(app_transport_lifespan_error):
-    """
-    Fixture that provides a test client for the FastAPI application (lifespan error scenario).
-    Yields (client, mock_create_all, mock_log_instance, mock_inspect).
-    """
-    transport, mock_create_all, mock_log_instance, mock_inspect = app_transport_lifespan_error
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac, mock_create_all, mock_log_instance, mock_inspect
-
-@pytest.fixture
-def mock_get_session():
     mock_session = MagicMock()
-    # Configure mock_session to prevent FlushError
+
+    # Asignar id si falta, para evitar FlushError en objetos nuevos simulados
     def add_side_effect(obj):
-        if hasattr(obj, 'id') and getattr(obj, 'id', None) is None:
-            # Assign a UUID to simulate auto-generated primary key
-            setattr(obj, 'id', uuid4())
+        if hasattr(obj, "id") and getattr(obj, "id") in (None, "", 0):
+            setattr(obj, "id", uuid4())
         return None
 
     mock_session.add.side_effect = add_side_effect
     mock_session.flush.return_value = None
     mock_session.commit.return_value = None
     mock_session.rollback.return_value = None
-    mock_session.refresh.return_value = None
-    # Mock query methods for PedidosService.obtener and listar
-    mock_session.query.return_value.filter.return_value.first.return_value = None # Default for .obtener
-    mock_session.query.return_value.filter.return_value.order_by.return_value.offset.return_value.limit.return_value.all.return_value = [] # Default for .listar
+    mock_session.refresh.side_effect = lambda x: x
 
-    # Mock the context manager behavior for the session
-    mock_session.__enter__.return_value = mock_session
-    mock_session.__exit__.return_value = None
+    # Cadena típica para listar: query().filter(...).order_by(...).offset(...).limit(...).all()
+    q = mock_session.query.return_value
+    q.filter.return_value = q
+    q.order_by.return_value = q
+    q.offset.return_value = q
+    q.limit.return_value = q
+    q.all.return_value = []      # puedes sobreescribir en cada test según necesites
+    q.first.return_value = None  # para obtener uno
 
-    with patch("src.dependencies.get_session", return_value=mock_session):
-        yield mock_session
+    # Para get(...)
+    mock_session.get.return_value = None
 
-@pytest.fixture(autouse=True, scope="function") # Make it autouse and function scope
-def mock_pedido_service():
-    # Patch the svc function where it's defined in the router
-    mock_instance = MagicMock()
-    with patch("src.routes.pedido.svc", return_value=mock_instance):
-        yield mock_instance
+    return mock_session
+
+# --- App FastAPI con dependencias parchadas ---
+@pytest.fixture(scope="function")
+async def app_instance(mock_db_session):
+    """
+    Crea la app pero:
+      - parchea engine e inspect para que NUNCA pegue a DB
+      - hace no-op de Base.metadata.create_all()
+      - override de get_session para usar mock_db_session
+    """
+    # Parches de infra y metadata ANTES de importar la app
+    with (
+        patch("src.infrastructure.infrastructure.engine") as mock_engine,
+        patch("src.domain.models.Base.metadata.create_all") as mock_create_all,
+        patch("sqlalchemy.inspect") as mock_inspect,
+    ):
+        mock_engine.execution_options.return_value = mock_engine
+        mock_engine.connect.return_value.__enter__.return_value = MagicMock()
+        mock_engine.begin.return_value.__enter__.return_value = MagicMock()
+        mock_create_all.return_value = None
+        mock_inspect.return_value.get_table_names.return_value = ["fake_table"]
+
+        from src.app import app as fastapi_app
+        from src.dependencies import get_session as real_get_session
+
+        def _override_get_session():
+            yield mock_db_session
+
+        fastapi_app.dependency_overrides[real_get_session] = _override_get_session
+        yield fastapi_app
+
+        fastapi_app.dependency_overrides.clear()
