@@ -9,6 +9,7 @@ class ItemIn(BaseModel):
     impuesto_pct: Optional[condecimal(max_digits=5, decimal_places=2)] = None
     descuento_pct: Optional[condecimal(max_digits=5, decimal_places=2)] = None
     sku: Optional[str] = None
+    ubicacion_id: Optional[UUID] = None
 
 class PedidoCompraCreate(BaseModel):
     tipo: Literal["COMPRA"] = "COMPRA"

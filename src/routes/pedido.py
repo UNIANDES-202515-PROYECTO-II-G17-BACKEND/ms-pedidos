@@ -6,15 +6,22 @@ from uuid import UUID
 from src.dependencies import get_session
 from src.domain import schemas
 from src.services.pedido import PedidosService
+from src.dependencies import audit_context, AuditContext
+from src.config import settings
 
 router = APIRouter(prefix="/v1/pedidos", tags=["Pedidos"])
 
 def svc(db: Session): return PedidosService(db)
 
 @router.post("", response_model=schemas.PedidoOut, status_code=status.HTTP_201_CREATED)
-def crear_pedido(body: schemas.PedidoCreate, session: Session = Depends(get_session)):
+def crear_pedido(
+    body: schemas.PedidoCreate,
+    session: Session = Depends(get_session),
+    x_country: str = Header(..., alias=settings.COUNTRY_HEADER),  # ← NUEVO
+    ctx: AuditContext = Depends(audit_context),
+):
     try:
-        return svc(session).crear(body.model_dump())
+        return svc(session).crear(body.model_dump(), x_country=x_country, ctx=ctx)  # ← pasa el header
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
 
@@ -30,37 +37,10 @@ def obtener_pedido(pedido_id: UUID, session: Session = Depends(get_session)):
     if not p: raise HTTPException(404, detail="Pedido no encontrado")
     return p
 
-@router.post("/{pedido_id}/aprobar", response_model=schemas.PedidoOut)
-def aprobar_pedido(pedido_id: UUID, session: Session = Depends(get_session)):
-    try:
-        return svc(session).aprobar(pedido_id)
-    except ValueError as e:
-        raise HTTPException(400, detail=str(e))
-
-# ----- COMPRA -----
-@router.post("/{pedido_id}/link-oc", response_model=schemas.PedidoOut)
-def link_oc(pedido_id: UUID, body: dict, session: Session = Depends(get_session)):
-    try:
-        return svc(session).link_oc(pedido_id, body["oc_id"])
-    except KeyError:
-        raise HTTPException(400, detail="Falta oc_id")
-    except ValueError as e:
-        raise HTTPException(400, detail=str(e))
-
 @router.post("/{pedido_id}/marcar-recibido", response_model=schemas.PedidoOut)
 def marcar_recibido(pedido_id: UUID, session: Session = Depends(get_session)):
     try:
         return svc(session).marcar_recibido(pedido_id)
-    except ValueError as e:
-        raise HTTPException(400, detail=str(e))
-
-# ----- VENTA -----
-@router.post("/{pedido_id}/set-reserva", response_model=schemas.PedidoOut)
-def set_reserva(pedido_id: UUID, body: dict, session: Session = Depends(get_session)):
-    try:
-        return svc(session).set_reserva(pedido_id, body["reserva_token"])
-    except KeyError:
-        raise HTTPException(400, detail="Falta reserva_token")
     except ValueError as e:
         raise HTTPException(400, detail=str(e))
 
