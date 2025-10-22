@@ -226,9 +226,6 @@ class PedidosService:
             if pedido.tipo == PedidoTipo.VENTA.value:
                 # cliente institucional
                 inferred_who = getattr(pedido, "cliente_id", None)
-            elif pedido.tipo == PedidoTipo.COMPRA.value:
-                # (opcional) proveedor como "quién" en compras
-                inferred_who = getattr(pedido, "proveedor_id", None)
 
         payload = {
             "event": evento or "state_change",
