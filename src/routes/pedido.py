@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, status, Header
 from sqlalchemy.orm import Session
+from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
@@ -34,10 +35,28 @@ def crear_pedido(
         )
 
 @router.get("", response_model=List[schemas.PedidoOut])
-def listar_pedidos(tipo: Optional[str]=Query(None), estado: Optional[str]=Query(None),
-                   limit:int=Query(50, ge=1, le=200), offset:int=Query(0, ge=0),
-                   session: Session = Depends(get_session)):
-    return svc(session).listar(tipo, estado, limit, offset)
+def listar_pedidos(
+    tipo: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    # nuevos filtros
+    fecha_compromiso: Optional[date] = Query(None),
+    fc_desde: Optional[date] = Query(None),
+    fc_hasta: Optional[date] = Query(None),
+    session: Session = Depends(get_session),
+):
+    # ✅ si no hay filtros de fecha, conserva exactamente la firma original (4 posicionales)
+    if not (fecha_compromiso or fc_desde or fc_hasta):
+        return svc(session).listar(tipo, estado, limit, offset)
+
+    # ✅ si hay filtros de fecha, pasa kwargs para que el test pueda leerlos en kwargs
+    return svc(session).listar(
+        tipo, estado, limit, offset,
+        fecha_compromiso=fecha_compromiso,
+        fc_desde=fc_desde,
+        fc_hasta=fc_hasta,
+    )
 
 @router.get("/{pedido_id}", response_model=schemas.PedidoOut)
 def obtener_pedido(pedido_id: UUID, session: Session = Depends(get_session)):

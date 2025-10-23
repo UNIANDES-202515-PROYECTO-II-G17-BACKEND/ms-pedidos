@@ -255,11 +255,29 @@ class PedidosService:
     def obtener(self, pedido_id: UUID) -> Pedido | None:
         return self.db.get(Pedido, pedido_id)
 
-    def listar(self, tipo: str | None, estado: str | None, limit: int, offset: int):
+    def listar(
+        self,
+        tipo: str | None,
+        estado: str | None,
+        limit: int | None,
+        offset: int | None,
+        fecha_compromiso: date | None = None,
+        fc_desde: date | None = None,
+        fc_hasta: date | None = None,
+    ):
         q = self.db.query(Pedido)
         if tipo: q = q.filter(Pedido.tipo == tipo)
         if estado: q = q.filter(Pedido.estado == estado)
-        return q.order_by(Pedido.fecha_creacion.desc()).offset(offset).limit(limit).all()
+
+        if fecha_compromiso: q = q.filter(Pedido.fecha_compromiso == fecha_compromiso)
+        else:
+            if fc_desde: q = q.filter(Pedido.fecha_compromiso >= fc_desde)
+            if fc_hasta: q = q.filter(Pedido.fecha_compromiso <= fc_hasta)
+
+        q = q.order_by(Pedido.fecha_compromiso.asc(), Pedido.codigo.asc())
+        if offset: q = q.offset(offset)
+        if limit:q = q.limit(limit)
+        return q.all()
 
     def _ensure(self, pedido_id: UUID) -> Pedido:
         p = self.obtener(pedido_id)

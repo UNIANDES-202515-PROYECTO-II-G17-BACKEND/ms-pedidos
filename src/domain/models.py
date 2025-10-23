@@ -41,6 +41,7 @@ class Pedido(Base):
             name="ck_pedido_refs_por_tipo"
         ),
         Index("ix_pedido_tipo_estado", "tipo", "estado"),
+        Index("ix_pedido_fecha_compromiso", "fecha_compromiso"),
     )
 
 class PedidoItem(Base):

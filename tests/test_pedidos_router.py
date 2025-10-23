@@ -170,3 +170,12 @@ async def test_cancelar_value_error(client, mock_svc):
     r = await client.post(f"/v1/pedidos/{uuid4()}/cancelar")
     assert r.status_code == 400
     assert r.json()["detail"] == "No se puede cancelar en este estado"
+
+@pytest.mark.asyncio
+async def test_listar_pedidos_por_fecha_compromiso(client, mock_svc):
+    mock_svc.listar.return_value = [make_pedido_out_compra("aprobado")]
+    r = await client.get("/v1/pedidos?fecha_compromiso=2025-10-25")
+    assert r.status_code == 200
+    mock_svc.listar.assert_called_once()
+    _, kwargs = mock_svc.listar.call_args
+    assert kwargs.get("fecha_compromiso") == date(2025, 10, 25)
