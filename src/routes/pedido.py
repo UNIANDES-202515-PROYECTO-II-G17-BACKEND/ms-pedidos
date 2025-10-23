@@ -17,13 +17,21 @@ def svc(db: Session): return PedidosService(db)
 def crear_pedido(
     body: schemas.PedidoCreate,
     session: Session = Depends(get_session),
-    x_country: str = Header(..., alias=settings.COUNTRY_HEADER),  # ← NUEVO
+    x_country: str = Header(..., alias=settings.COUNTRY_HEADER),  # Sigue siendo obligatorio
     ctx: AuditContext = Depends(audit_context),
 ):
+    """
+    Creación de pedido:
+    - VENTA: fecha_entrega opcional -> si no viene, se usará hoy+1.
+    - COMPRA: fecha_recepcion opcional -> si no viene, se calculará usando lead_time (ms-compras).
+    """
     try:
-        return svc(session).crear(body.model_dump(), x_country=x_country, ctx=ctx)  # ← pasa el header
+        return svc(session).crear(body.model_dump(), x_country=x_country, ctx=ctx)
     except ValueError as e:
-        raise HTTPException(400, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
 
 @router.get("", response_model=List[schemas.PedidoOut])
 def listar_pedidos(tipo: Optional[str]=Query(None), estado: Optional[str]=Query(None),

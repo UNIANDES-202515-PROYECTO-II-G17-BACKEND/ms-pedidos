@@ -24,5 +24,7 @@ class Settings:
     DEFAULT_SCHEMA = os.getenv("DEFAULT_SCHEMA", "co")
     COUNTRY_HEADER = os.getenv("COUNTRY_HEADER", "X-Country")
     GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "https://medisupply-gw-5k2l9pfv.uc.gateway.dev")
+    DEFAULT_COMPRA_LEAD_DAYS = int(os.getenv("DEFAULT_COMPRA_LEAD_DAYS", "2"))
+    DEFAULT_VENTA_LEAD_DAYS = int(os.getenv("DEFAULT_VENTA_LEAD_DAYS", "1"))
 
 settings = Settings()
