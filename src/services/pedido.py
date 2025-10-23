@@ -10,7 +10,6 @@ from src.domain.models import Pedido, PedidoItem, PedidoEvento
 from src.domain.enums import PedidoTipo, PedidoEstado
 from src.config import settings
 from src.infrastructure.http import MsClient
-from tests.conftest import client
 
 log = logging.getLogger("PedidosService")
 
