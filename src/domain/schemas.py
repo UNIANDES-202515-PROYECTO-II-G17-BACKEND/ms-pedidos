@@ -1,6 +1,7 @@
 from pydantic import BaseModel, conint, condecimal
 from typing import List, Optional, Literal, Union
 from uuid import UUID
+from datetime import datetime, date # ← nuevo
 
 class ItemIn(BaseModel):
     producto_id: UUID
@@ -17,6 +18,7 @@ class PedidoCompraCreate(BaseModel):
     bodega_destino_id: UUID
     items: List[ItemIn]
     observaciones: Optional[str] = None
+    fecha_recepcion: Optional[date] = None
 
 class PedidoVentaCreate(BaseModel):
     tipo: Literal["VENTA"] = "VENTA"
@@ -25,6 +27,7 @@ class PedidoVentaCreate(BaseModel):
     bodega_origen_id: UUID
     items: List[ItemIn]
     observaciones: Optional[str] = None
+    fecha_entrega: Optional[date] = None
 
 PedidoCreate = Union[PedidoCompraCreate, PedidoVentaCreate]
 
@@ -41,3 +44,4 @@ class PedidoOut(BaseModel):
     bodega_destino_id: Optional[UUID] = None
     total: Optional[condecimal(max_digits=14, decimal_places=4)] = None
     items: List[ItemIn] = []
+    fecha_compromiso: date

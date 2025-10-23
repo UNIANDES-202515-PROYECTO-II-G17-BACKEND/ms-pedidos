@@ -1,5 +1,5 @@
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy import Column, String, DateTime, Integer, Numeric, ForeignKey, CheckConstraint, Index
+from sqlalchemy import Column, String, DateTime, Integer, Numeric, ForeignKey, CheckConstraint, Index, Date
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 import uuid
@@ -14,6 +14,8 @@ class Pedido(Base):
     tipo = Column(String(16), nullable=False)      # COMPRA|VENTA
     estado = Column(String(24), nullable=False, default="BORRADOR")
     observaciones = Column(String(500))
+
+    fecha_compromiso = Column(Date, nullable=False)
 
     proveedor_id = Column(UUID(as_uuid=True), nullable=True)   # COMPRA
     oc_id = Column(UUID(as_uuid=True), nullable=True)          # ms-compras.orden_compra.id

@@ -2,6 +2,7 @@
 import pytest
 from uuid import uuid4
 from decimal import Decimal
+from datetime import date
 from src.domain import schemas
 
 # -------------------------
@@ -26,6 +27,7 @@ def make_pedido_out_venta(estado="aprobado"):
         subtotal=Decimal("10.0"),
         impuesto_total=Decimal("0.0"),
         total=Decimal("10.0"),
+        fecha_compromiso=date.today(),  # ← NUEVO
     )
 
 def make_pedido_out_compra(estado="aprobado"):
@@ -46,6 +48,7 @@ def make_pedido_out_compra(estado="aprobado"):
         subtotal=Decimal("10.0"),
         impuesto_total=Decimal("0.0"),
         total=Decimal("10.0"),
+        fecha_compromiso=date.today(),  # ← NUEVO
     )
 
 # -------------------------
