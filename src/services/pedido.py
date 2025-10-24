@@ -13,9 +13,11 @@ from src.infrastructure.http import MsClient
 
 log = logging.getLogger("PedidosService")
 
+
 def _dec(v, d="0"):
     from decimal import Decimal
     return Decimal(str(v if v is not None else d))
+
 
 def _safe_json(obj) -> str:
     try:
@@ -23,20 +25,25 @@ def _safe_json(obj) -> str:
     except Exception:
         return json.dumps({"detail": str(obj)}, ensure_ascii=False)
 
+
 def _to_naive_utc(dt: datetime) -> datetime:
     if dt.tzinfo:
         return dt.astimezone(UTC).replace(tzinfo=None)
     return dt
 
+
 def calcular_totales(pedido: Pedido):
-    sub = Decimal("0"); imp = Decimal("0")
+    sub = Decimal("0")
+    imp = Decimal("0")
     for it in pedido.items:
         li = _dec(it.precio_unitario) * it.cantidad
         dsc = li * _dec(it.descuento_pct) / 100
         neto = li - dsc
         imp += neto * _dec(it.impuesto_pct) / 100
         sub += neto
-    pedido.subtotal = sub; pedido.impuesto_total = imp; pedido.total = sub + imp
+    pedido.subtotal = sub
+    pedido.impuesto_total = imp
+    pedido.total = sub + imp
 
 
 class PedidosService:
@@ -53,7 +60,7 @@ class PedidosService:
         y toma terminos.lead_time_dias del proveedor correspondiente.
         """
         try:
-            data = self.ms.get(f"/v1/proveedores/{producto_id}/proveedores")
+            data = client.get(f"/v1/proveedores/{producto_id}/proveedores")
             for prov in data or []:
                 if str(prov.get("id")) == str(proveedor_id):
                     lt = prov.get("terminos", {}).get("lead_time_dias")
@@ -61,7 +68,6 @@ class PedidosService:
         except Exception as e:
             log.warning(f"Fallo consultando lead time: {e}")
         return None
-
 
     def _calcular_fecha_compromiso_compra(self, proveedor_id: UUID, items: list[dict], client: MsClient) -> date:
         lead_times = []
@@ -75,8 +81,7 @@ class PedidosService:
         dias = max(lead_times) if lead_times else settings.DEFAULT_COMPRA_LEAD_DAYS
         return date.today() + timedelta(days=dias)
 
-
-    def crear(self, payload: dict, x_country: str, ctx = None) -> Pedido:
+    def crear(self, payload: dict, x_country: str, ctx=None) -> Pedido:
         tipo = payload["tipo"]
         client = MsClient(x_country)
 
@@ -104,13 +109,18 @@ class PedidosService:
             vendedor_id=payload.get("vendedor_id"),
             bodega_origen_id=payload.get("bodega_origen_id"),
             observaciones=payload.get("observaciones"),
-            # NUEVO
             fecha_compromiso=fecha_compromiso,
         )
 
-        self.db.add(p); self.db.flush()
-        self._log(p, p.estado, {"message": "Fecha Compromiso Calculada", "Fecha": p.fecha_compromiso}, ctx=ctx,
-                  evento="pedido_creado")
+        self.db.add(p)
+        self.db.flush()
+        self._log(
+            p,
+            p.estado,
+            {"message": "Fecha Compromiso Calculada", "Fecha": p.fecha_compromiso},
+            ctx=ctx,
+            evento="pedido_creado",
+        )
 
         # Items...
         p.items = []
@@ -128,14 +138,16 @@ class PedidosService:
             p.items.append(item)
 
         calcular_totales(p)
-        self._log(p, p.estado, {"message":"Creado", "items": len(p.items)}, ctx=ctx, evento="pedido_creado")
-        self.db.commit(); self.db.refresh(p)
+        self._log(p, p.estado, {"message": "Creado", "items": len(p.items)}, ctx=ctx, evento="pedido_creado")
+        self.db.commit()
+        self.db.refresh(p)
 
         # ---------- Auto-aprobar y orquestar ----------
         prev = p.estado
         p.estado = PedidoEstado.APROBADO.value
         self._log(p, p.estado, "Auto-aprobado al crear", ctx=ctx, evento="pedido_aprobado", de=prev)
-        self.db.commit(); self.db.refresh(p)
+        self.db.commit()
+        self.db.refresh(p)
 
         if p.tipo == PedidoTipo.COMPRA.value:
             # Crear OC en ms-compras (dejar pedido en APROBADO)
@@ -151,39 +163,49 @@ class PedidosService:
                         "precio_unitario": float(it.precio_unitario or 0),
                         "impuesto_pct": float(it.impuesto_pct or 0),
                         "descuento_pct": float(it.descuento_pct or 0),
-                        "sku_proveedor": it.sku or None
-                    } for it in p.items
-                ]
+                        "sku_proveedor": it.sku or None,
+                    }
+                    for it in p.items
+                ],
             }
             oc = client.post("/v1/ordenes-compra", json=oc_payload)  # espera { id, ... }
             if oc and oc.get("id"):
                 p.oc_id = oc["id"]
-                self._log(
-                    p, p.estado,
-                    {"message": "OC creada y vinculada", "oc_id": p.oc_id},
-                    ctx=ctx, evento="oc_creada"
-                )
+                self._log(p, p.estado, {"message": "OC creada y vinculada", "oc_id": p.oc_id}, ctx=ctx, evento="oc_creada")
 
         elif p.tipo == PedidoTipo.VENTA.value:
             # Salida FEFO por cada ítem (mantener estado APROBADO)
-            tokens = []
+            # Respuesta: lista de dicts [{"inventario_id": UUID, "consumido": int}, ...]
+            reservas_ids: list[str] = []
             for it in p.items:
                 resp = client.post(
                     "/v1/inventario/salida/fefo",
-                    params={"producto_id": str(it.producto_id), "cantidad": int(it.cantidad)}
+                    params={"producto_id": str(it.producto_id), "cantidad": int(it.cantidad)},
                 )
-                tokens.append((resp or {}).get("token") or "OK")
-            p.reserva_token = ",".join(tokens)
+                if isinstance(resp, list):
+                    for elem in resp:
+                        inv_id = elem.get("inventario_id")
+                        if inv_id:
+                            reservas_ids.append(str(inv_id))
+
+            # deduplicar preservando orden
+            seen = set()
+            reservas_ids = [x for x in reservas_ids if not (x in seen or seen.add(x))]
+            p.reserva_token = ",".join(reservas_ids) if reservas_ids else None
+
             self._log(
-                p, p.estado,
-                {"message": "Salida FEFO completada", "tokens": tokens, "items": len(p.items)},
-                ctx=ctx, evento="salida_fefo"
+                p,
+                p.estado,
+                {"message": "Salida FEFO completada", "reservas_inventario_ids": reservas_ids, "items": len(p.items)},
+                ctx=ctx,
+                evento="salida_fefo",
             )
 
-        self.db.commit(); self.db.refresh(p)
+        self.db.commit()
+        self.db.refresh(p)
         return p
 
-    def marcar_recibido(self, pedido_id: UUID, x_country: str | None = None,  ctx = None) -> Pedido:
+    def marcar_recibido(self, pedido_id: UUID, x_country: str | None = None, ctx=None) -> Pedido:
         p = self._ensure(pedido_id)
         if p.tipo != PedidoTipo.COMPRA.value:
             raise ValueError("Solo aplica para pedidos de COMPRA")
@@ -198,37 +220,42 @@ class PedidosService:
             for idx, it in enumerate(p.items, start=1):
                 # 3.1 crear lote
                 lote_code = f"LOTE-{p.codigo}-{idx:02d}"
-                lote = client.post("/v1/inventario/lote", json={
-                    "producto_id": str(it.producto_id),
-                    "codigo": lote_code,
-                    "vencimiento": None  # opcional: podrías inferir/recibirlo
-                })
+                lote = client.post(
+                    "/v1/inventario/lote",
+                    json={
+                        "producto_id": str(it.producto_id),
+                        "codigo": lote_code,
+                        "vencimiento": None,  # opcional
+                    },
+                )
                 lote_id = lote.get("id")
 
                 # 3.2 obtener ubicacion_id
                 ubicacion_id = getattr(it, "ubicacion_id", None)  # si extendiste esquema
                 if not ubicacion_id:
                     # estrategia simple: crea una ubicación default en la bodega destino
-                    ub = client.post("/v1/inventario/ubicacion", json={
-                        "bodega_id": str(p.bodega_destino_id),
-                        "pasillo": "A", "estante": "1", "posicion": "1"
-                    })
+                    ub = client.post(
+                        "/v1/inventario/ubicacion",
+                        json={"bodega_id": str(p.bodega_destino_id), "pasillo": "A", "estante": "1", "posicion": "1"},
+                    )
                     ubicacion_id = ub.get("id")
 
-                # 3.3 registrar entrada
-                client.post("/v1/inventario/entrada", json={
-                    "lote_id": lote_id,
-                    "ubicacion_id": ubicacion_id,
-                    "cantidad": int(it.cantidad),
-                    "estado": "DISPONIBLE"
-                })
+                client.post(
+                    "/v1/inventario/entrada",
+                    json={
+                        "lote_id": lote_id,
+                        "ubicacion_id": ubicacion_id,
+                        "cantidad": int(it.cantidad),
+                        "estado": "DISPONIBLE",
+                    },
+                )
 
         p.estado = PedidoEstado.RECIBIDO.value
         self._log(p, p.estado, "Recepción confirmada", ctx=ctx, evento="pedido_recibido", de=prev)
         self.db.commit(); self.db.refresh(p)
         return p
 
-    def marcar_despachado(self, pedido_id: UUID, x_country: str | None = None, ctx = None) -> Pedido:
+    def marcar_despachado(self, pedido_id: UUID, x_country: str | None = None, ctx=None) -> Pedido:
         p = self._ensure(pedido_id)
         if p.tipo != PedidoTipo.VENTA.value:
             raise ValueError("Solo aplica para pedidos de VENTA")
@@ -273,10 +300,9 @@ class PedidosService:
         else:
             if fc_desde: q = q.filter(Pedido.fecha_compromiso >= fc_desde)
             if fc_hasta: q = q.filter(Pedido.fecha_compromiso <= fc_hasta)
-
         q = q.order_by(Pedido.fecha_compromiso.asc(), Pedido.codigo.asc())
         if offset: q = q.offset(offset)
-        if limit:q = q.limit(limit)
+        if limit: q = q.limit(limit)
         return q.all()
 
     def _ensure(self, pedido_id: UUID) -> Pedido:
@@ -285,15 +311,15 @@ class PedidosService:
         return p
 
     def _log(
-            self,
-            pedido: Pedido,
-            estado: str,
-            detalle: str | dict,
-            quien_user_id: int | None = None,
-            ctx=None,
-            evento: str | None = None,
-            de: str | None = None,
-            extra: dict | None = None,
+        self,
+        pedido: Pedido,
+        estado: str,
+        detalle: str | dict,
+        quien_user_id: int | None = None,
+        ctx=None,
+        evento: str | None = None,
+        de: str | None = None,
+        extra: dict | None = None,
     ):
         inferred_who = quien_user_id
         if inferred_who is None:
@@ -320,15 +346,16 @@ class PedidosService:
         if extra:
             payload["extra"] = extra
 
-        self.db.add(PedidoEvento(
-            pedido_id=pedido.id,
-            estado=estado,
-            detalle=_safe_json(payload),
-            quien_user_id=inferred_who,  # 👈 persistimos el mismo valor
-        ))
+        self.db.add(
+            PedidoEvento(
+                pedido_id=pedido.id,
+                estado=estado,
+                detalle=_safe_json(payload),
+                quien_user_id=inferred_who,
+            )
+        )
 
         try:
             log.info(_safe_json({"audit": payload}))
         except Exception:
             pass
-

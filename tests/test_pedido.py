@@ -87,6 +87,8 @@ def test_dec():
 @patch('src.services.pedido.calcular_totales')
 @patch('src.services.pedido.MsClient')
 def test_crear_pedido_venta_autoaprueba_y_salida_fefo(mock_client_cls, mock_calc, service, mock_db):
+    from uuid import uuid4
+
     payload = {
         "tipo": PedidoTipo.VENTA.value,
         "cliente_id": 1,
@@ -109,9 +111,10 @@ def test_crear_pedido_venta_autoaprueba_y_salida_fefo(mock_client_cls, mock_calc
         p.total = Decimal("209.0")
     mock_calc.side_effect = se
 
-    # Mock MsClient.post -> respuesta típica de salida/fefo
+    # Mock MsClient.post -> respuesta **actual** de salida/fefo (lista de dicts)
+    inv_id = uuid4()
     mock_client = MagicMock()
-    mock_client.post.return_value = {"token": "tk-123"}
+    mock_client.post.return_value = [{"inventario_id": str(inv_id), "consumido": 2}]
     mock_client_cls.return_value = mock_client
 
     pedido = service.crear(payload, x_country="co")
@@ -119,11 +122,13 @@ def test_crear_pedido_venta_autoaprueba_y_salida_fefo(mock_client_cls, mock_calc
     # Estado final
     assert pedido.tipo == PedidoTipo.VENTA.value
     assert pedido.estado == PedidoEstado.APROBADO.value
-    assert pedido.reserva_token is not None and "tk-123" in pedido.reserva_token
+    # reserva_token ahora es CSV de inventario_id; debe contener el inv_id retornado
+    assert pedido.reserva_token is not None
+    assert str(inv_id) in pedido.reserva_token
 
-    # Llamadas a MsClient: salida FEFO por cada ítem
+    # Llamadas a MsClient: salida FEFO por cada ítem (1 ítem)
     calls = [c for c in mock_client.post.call_args_list if "/v1/inventario/salida/fefo" in c.args[0]]
-    assert len(calls) == 1  # 1 ítem
+    assert len(calls) == 1
     _, kwargs = calls[0]
     assert "params" in kwargs and kwargs["params"]["cantidad"] == 2
 
