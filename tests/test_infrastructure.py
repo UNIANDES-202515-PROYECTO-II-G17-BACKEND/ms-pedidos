@@ -5,7 +5,6 @@ import pytest
 from src.infrastructure.infrastructure import get_redis
 from src.infrastructure.infrastructure import publish_event
 import json
-from unittest.mock import MagicMock
 from uuid import uuid4
 
 def test_get_redis_none_when_not_configured(monkeypatch):
