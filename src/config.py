@@ -27,4 +27,10 @@ class Settings:
     DEFAULT_COMPRA_LEAD_DAYS = int(os.getenv("DEFAULT_COMPRA_LEAD_DAYS", "2"))
     DEFAULT_VENTA_LEAD_DAYS = int(os.getenv("DEFAULT_VENTA_LEAD_DAYS", "1"))
 
+    TOPIC_PEDIDOS = os.getenv("TOPIC_PEDIDOS")
+    TOPIC_INVENTARIO = os.getenv("TOPIC_INVENTARIO")
+    TOPIC_LOGISTICA = os.getenv("TOPIC_LOGISTICA")
+    TOPIC_VENTAS_CRM = os.getenv("TOPIC_VENTAS_CRM")
+    TOPIC_TELEMETRIA = os.getenv("TOPIC_TELEMETRIA")
+
 settings = Settings()
